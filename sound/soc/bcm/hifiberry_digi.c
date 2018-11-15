@@ -27,10 +27,6 @@
 
 #include "../codecs/wm8804.h"
 
-static short int auto_shutdown_output = 0;
-module_param(auto_shutdown_output, short, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(auto_shutdown_output, "Shutdown SP/DIF output if playback is stopped");
-
 #define CLK_44EN_RATE 22579200UL
 #define CLK_48EN_RATE 24576000UL
 
@@ -38,7 +34,7 @@ static bool snd_rpi_hifiberry_is_digipro;
 static struct gpio_desc *snd_rpi_hifiberry_clk44gpio;
 static struct gpio_desc *snd_rpi_hifiberry_clk48gpio;
 
-static int samplerate=44100;
+static int samplerate=0;
 
 static uint32_t snd_rpi_hifiberry_digi_enable_clock(int sample_rate)
 {
@@ -61,11 +57,6 @@ static uint32_t snd_rpi_hifiberry_digi_enable_clock(int sample_rate)
 
 static int snd_rpi_hifiberry_digi_init(struct snd_soc_pcm_runtime *rtd)
 {
-	struct snd_soc_codec *codec = rtd->codec;
-
-	/* enable TX output */
-	snd_soc_update_bits(codec, WM8804_PWRDN, 0x4, 0x0);
-
 	/* Initialize Digi+ Pro hardware */
 	if (snd_rpi_hifiberry_is_digipro) {
 		struct snd_soc_dai_link *dai = rtd->dai_link;
@@ -74,27 +65,16 @@ static int snd_rpi_hifiberry_digi_init(struct snd_soc_pcm_runtime *rtd)
 		dai->stream_name = "HiFiBerry Digi+ Pro HiFi";
 	}
 
-	return 0;
+	return snd_soc_dai_set_bclk_ratio(rtd->cpu_dai,64);
 }
 
-static int snd_rpi_hifiberry_digi_startup(struct snd_pcm_substream *substream) {
-	/* turn on digital output */
+static int snd_rpi_hifiberry_digi_startup(struct snd_pcm_substream *substream)
+{
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_codec *codec = rtd->codec;
 	snd_soc_update_bits(codec, WM8804_PWRDN, 0x3c, 0x00);
 	return 0;
 }
-
-static void snd_rpi_hifiberry_digi_shutdown(struct snd_pcm_substream *substream) {
-	/* turn off output */
-	if (auto_shutdown_output) {
-		/* turn off output */
-		struct snd_soc_pcm_runtime *rtd = substream->private_data;
-		struct snd_soc_codec *codec = rtd->codec;
-		snd_soc_update_bits(codec, WM8804_PWRDN, 0x3c, 0x3c);
-	}
-}
-
 
 static int snd_rpi_hifiberry_digi_hw_params(struct snd_pcm_substream *substream,
 				       struct snd_pcm_hw_params *params)
@@ -102,7 +82,6 @@ static int snd_rpi_hifiberry_digi_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
 	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 
 	int sysclk = 27000000; /* This is fixed on this board */
 
@@ -111,6 +90,9 @@ static int snd_rpi_hifiberry_digi_hw_params(struct snd_pcm_substream *substream,
 	int sampling_freq=1;
 
 	int ret;
+
+	if (samplerate == params_rate(params))
+		return 0;
 
 	samplerate = params_rate(params);
 
@@ -165,23 +147,14 @@ static int snd_rpi_hifiberry_digi_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 	}
 
-	/* Enable TX output */
-	snd_soc_update_bits(codec, WM8804_PWRDN, 0x4, 0x0);
-
-	/* Power on */
-	snd_soc_update_bits(codec, WM8804_PWRDN, 0x9, 0);
-
 	/* set sampling frequency status bits */
-	snd_soc_update_bits(codec, WM8804_SPDTX4, 0x0f, sampling_freq);
-
-	return snd_soc_dai_set_bclk_ratio(cpu_dai,64);
+	return snd_soc_update_bits(codec, WM8804_SPDTX4, 0x0f, sampling_freq);
 }
 
 /* machine stream operations */
 static struct snd_soc_ops snd_rpi_hifiberry_digi_ops = {
 	.hw_params = snd_rpi_hifiberry_digi_hw_params,
         .startup = snd_rpi_hifiberry_digi_startup,
-        .shutdown = snd_rpi_hifiberry_digi_shutdown,
 };
 
 static struct snd_soc_dai_link snd_rpi_hifiberry_digi_dai[] = {
